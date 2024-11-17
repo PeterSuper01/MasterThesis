@@ -1,0 +1,424 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(pracma)
+library(extraDistr)
+```
+
+
+
+
+
+$t$-th power moment $K_t()$:
+
+$$K_t(D)=\sum_{1\le i < j\le N}[\delta_{ij}(D)]^t/(N(N-1)/2)$$
+其中 $\delta_{ij}(D)$ 是 $D$ 中第 $i$ 和第 $j$ 列的相同元素的個數。
+
+```{r}
+# random 12x16 SSD
+
+design <- matrix(rbinom(12*16, 1, 0.5), 12, 16)*2-1
+
+K_function <- function(design, t=2) {
+  N <- nrow(design)
+  delta <- matrix(0, N, N)
+  for (i in 1:(N-1)) {
+    for (j in (i+1):N) {
+      delta[i, j] <- sum(design[i, ] == design[j, ])
+    }
+  }
+  return(sum(delta[delta != 0]^t) / (N*(N-1)/2))
+}
+
+K_function(design, 2)
+```
+
+$$A_t(D)=E(J_t^2)/N^2$$
+
+```{r}
+A_function <- function(design, t=2) {
+  n <- ncol(design)
+  N <- nrow(design)
+  if (t == 1) {
+    return(sum(apply(design, 2, sum)^2) / N^2)
+  } else {
+    sum_products <- 0
+    comb <- combn(n, t)
+    for (i in 1:choose(n, t)) {
+      sum_products <- sum_products + sum(apply(design[, comb[, i]], 1, prod))^2
+    }
+    return(sum_products / N^2)
+  }
+}
+
+A_function(design, 2)
+```
+
+在所有因子 level 數都為 2 的情況下:
+
+\begin{aligned}
+  K_2&=\frac{[2A_2+2nA_1+n(n+1)]N-4n^2}{4(N-1)}\\
+  K_3&=\frac{[6A_3+6nA_2+(3n^2+3n-2)A_1+n^3+3n^2]N-8n^3}{8(N-1)}
+\end{aligned}
+
+$A_1=0$ if the design is balance.
+
+\begin{aligned}
+  A_2&=\frac{2(N-1)}{N}K_2-\frac{n(n+1)N-4n^2}{2N}\\
+  A_3&=\frac{4(N-1)}{3N}K_3-\frac{2n(N-1)}{N}K_2+\frac{n^3N-2n^3}{3N}
+\end{aligned}
+
+```{r}
+n <- ncol(design)
+N <- nrow(design)
+
+K_function(design, 2)
+((2*A_function(design, 2) + 2*n*A_function(design, 1) + n*(n+1))*N - 4*n^2) / (4*(N-1))
+
+K_function(design, 3)
+((6*A_function(design, 3) + 6*n*A_function(design, 2) + (3*n^2+3*n-2)*A_function(design, 1) + n^3 + 3*n^2)*N - 8*n^3) / (8*(N-1))
+
+
+# a random 12x16 balance SSD
+
+design <- cbind(rep(c(-1, 1), each=6)[randperm(12, 12)])
+for (i in 1:15) {
+  design <- cbind(design, rep(c(-1, 1), each=6)[randperm(12, 12)])
+}
+
+A_function(design, 2)
+2*(N-1)/N*K_function(design, 2) - (n*(n+1)*N-4*n^2)/(2*N)
+A_function(design, 3)
+4*(N-1)/(3*N)*K_function(design, 3) - 2*n*(N-1)/N*K_function(design, 2) + 
+  (n^3*N-2*n^3)/(3*N)
+```
+
+$$K_1=\frac{n(N-2)}{2(N-1)}=\sum_{1\le i < j\le N}\delta_{ij}(D)/{N\choose 2}$$
+
+```{r}
+design <- cbind(rep(c(-1, 1), each=6)[randperm(12, 12)])
+for (i in 1:14) {
+  design <- cbind(design, rep(c(-1, 1), each=6)[randperm(12, 12)])
+}
+
+K_function(design, 1)*choose(nrow(design), 2)
+
+N <- nrow(design)
+delta <- matrix(0, N, N)
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    delta[i, j] <- sum(design[i, ] == design[j, ])
+  }
+}
+
+table(delta[upper.tri(delta)])
+
+```
+
+to minimize $\lambda A_2+(1-\lambda)A_3$
+
+\begin{aligned}
+\lambda A_2+(1-\lambda)A_3
+&=\frac{2(N-1)}{N}[n+\lambda(1-n)]K_2+(1-\lambda)\frac{4(N-1)}{3N}K_3+c(N, n, \lambda)\\
+&\propto\lambda E(J_2^2)\times {n\choose 2}+(1-\lambda)E(J_3^2) {n\choose 3}
+\end{aligned}
+
+
+```{r}
+CreateSSD <- function(lambda = 0.5, N=12, n=16) {
+  design <- cbind(rep(c(-1, 1), each=N/2), rep(c(-1, 1, -1, 1), each=N/4))
+  # design <- FFD2(4)
+  for (column in 1:(n-2)) {
+    last_added <- Inf
+    for (try in 1:100) {
+      # randomly generate a balance length N vector
+      col_added <- rep(c(-1, 1), each=(N/2))[randperm(N, N)]
+      delta <- matrix(0, nrow(design), nrow(design))
+      for (i in 1:(nrow(design)-1)) {
+        for (j in (i+1):nrow(design)) {
+          delta[i, j] <- sum(cbind(design, col_added)[i, ] == cbind(design, col_added)[j, ])
+        }
+      }
+      
+      K2 <- sum(delta[upper.tri(delta)]^2)
+      K3 <- sum(delta[upper.tri(delta)]^3)
+      last_value <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+      
+      
+      
+      while (T) {
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        value_added <- matrix(0, N/2, N/2)
+        i <- 0
+        for (place1 in pos_place) {
+          i <- i + 1
+          j <- 0
+          for (place2 in neg_place) {
+            j <- j + 1
+            
+            delta_star <- delta
+            delta_star[place1, neg_place[-j]] <- delta_star[place1, neg_place[-j]] + 1
+            delta_star[place1, pos_place[-i]] <- delta_star[place1, pos_place[-i]] - 1
+            delta_star[place2, pos_place[-i]] <- delta_star[place2, pos_place[-i]] + 1
+            delta_star[place2, neg_place[-j]] <- delta_star[place2, neg_place[-j]] - 1
+            delta_star <- (delta_star[upper.tri(delta_star)]+t(delta_star)[upper.tri(delta_star)])
+            K2 <- sum(delta_star^2)
+            K3 <- sum(delta_star^3)
+            
+            value_added[i, j] <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+          }
+        }
+        
+        # if no improvement, then break
+        if (min(value_added) >= last_value) {
+          break
+        } else {
+          exchange_places <- which(value_added == min(value_added), arr.ind=TRUE)[1, ]
+          col_added[c(pos_place[exchange_places[1]], neg_place[exchange_places[2]])] <-
+            col_added[c(neg_place[exchange_places[2]], pos_place[exchange_places[1]])]
+        }
+        last_value <- min(value_added)
+      }
+      if (last_value < last_added) {
+        last_added <- last_value
+        best_col_added <- col_added
+      }
+    }
+    
+    # append design matrix
+    design <- cbind(design, best_col_added)
+  }
+  colnames(design) <- 1:ncol(design)
+  return(design)
+}
+
+lambda <- 0.7
+start_time <- Sys.time()
+design1 <- CreateSSD(lambda, 16, 32)
+Sys.time() - start_time
+
+dim(design1)
+A_function(design1, 2)
+A_function(design1, 3)
+
+lambda*J_function(design1, 2) + (1-lambda)*J_function(design1, 3)
+
+K_function(design1, 2)
+K_function(design1, 3)
+```
+
+
+```{r}
+N <- 16
+delta <- matrix(0, N, N)
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    delta[i, j] <- sum(design1[i, ] == design1[j, ])
+  }
+}
+delta
+```
+
+
+
+```{r}
+CreateSSD <- function(lambda = 0.5) {
+  design <- cbind(rep(c(-1, 1), each=N/2), rep(c(-1, 1, -1, 1), each=N/4))
+  FI2 <- matrix(0, nrow(design), choose(ncol(design), 2))
+  count <- 0
+  for (i in 1:(ncol(design)-1)){
+    for (j in (i+1):ncol(design)){
+      count <- count + 1
+      FI2[, count] <- design[, i]*design[, j]
+    }
+  }
+  
+  J23 <- 0
+  for (column in 1:30) {
+    last_added <- Inf
+    for (i in 1:100) {
+      # randomly generate a balance length 16 vector
+      col_added <- rep(c(-1, 1), each=8)[randperm(16, 16)]
+      last_J23_plus <- lambda*sum((t(design) %*% col_added)^2) + 
+        (1-lambda) * sum((t(FI2) %*% col_added)^2)
+      while (T) {
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        
+        value_added <- matrix(0, 8, 8)
+        j <- 0
+        for (place1 in pos_place) {
+          j <- j + 1
+          k <- 0
+          for (place2 in neg_place) {
+            k <- k + 1
+            col_added_exchange <- col_added
+            col_added_exchange[c(place1, place2)] <- col_added_exchange[c(place2, place1)]
+            J2_plus <- sum((t(design) %*% col_added_exchange)^2)
+            J3_plus <- sum((t(FI2) %*% col_added_exchange)^2)
+            value_added[j, k] <- lambda*J2_plus + (1-lambda)*J3_plus
+          }
+        }
+        
+        # if no improvement, then break
+        if (min(value_added) >= last_J23_plus) {
+          break
+        } else {
+          exchange_places <- which(value_added == min(value_added), arr.ind=TRUE)[1, ]
+          col_added[c(pos_place[exchange_places[1]], neg_place[exchange_places[2]])] <-
+            col_added[c(neg_place[exchange_places[2]], pos_place[exchange_places[1]])]
+        }
+        last_J23_plus <- min(value_added)
+      }
+      if (last_J23_plus < last_added) {
+        last_added <- last_J23_plus
+        best_col_added <- col_added
+      }
+    }
+    
+    # append FI2
+    for (m in 1:ncol(design)) {
+      FI2 <- cbind(FI2, best_col_added * design[, m])
+    }
+    # append design matrix
+    design <- cbind(design, best_col_added)
+    J23 <- J23 + last_added
+  }
+  return(design)
+}
+
+start_time <- Sys.time()
+design2 <- CreateSSD()
+Sys.time() - start_time
+
+dim(design2)
+
+A_function(design2, 2)
+A_function(design2, 3)
+lambda*J_function(design2, 2) + (1-lambda)*J_function(design2, 3)
+
+K_function(design2, 2)
+K_function(design2, 3)
+```
+
+```{r}
+N <- 16
+delta <- matrix(0, N, N)
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    delta[i, j] <- sum(design2[i, ] == design2[j, ])
+  }
+}
+delta
+```
+
+```{r}
+cstar <- function(N, n, lambda) {
+  (n^3*N-2*n^3)/3/N - lambda*((n^3*N-2*n^3)/3/N + (n*(n+1)*N-4*n^2)/2/N)
+}
+```
+
+
+Try to solve the following problem numerically:
+
+Given $x_1, \dots, x_n$ nonnegative integers and $\sum_{i=1}^nx_i=m$, to minimize
+
+$$\lambda^\ast\sum_{i=1}^nx_i^2+(1-\lambda^\ast)\sum_{i=1}^nx_i^3$$
+
+$x_i$ 代表某兩列 coincidence 數。
+
+```{r}
+weight_J <- function(x, lambda) {
+  return(lambda*sum(x^2) + (1-lambda)*sum(x^3))
+}
+
+# genetic algorithm
+
+GA <- function(m, n, lambda, max_iter=1000, pop_size=100, mutation_rate=0.1) {
+  stop_flag <- FALSE
+    pop <- matrix(0, pop_size, n)
+    for (i in 1:pop_size) {
+      pop[i, ] <- rmultinom(1, m, rep(1, n))
+    }
+    
+    record <- numeric(max_iter)
+    for (iter in 1:max_iter) {
+      # calculate fitness
+      fitness <- rep(0, pop_size)
+      for (i in 1:pop_size) {
+        fitness[i] <- weight_J(pop[i, ], lambda)
+      }
+      record[iter] <- min(fitness)
+      
+      # select parents
+      parents <- matrix(0, pop_size, n)
+      for (i in 1:pop_size) {
+        parents[i, ] <- pop[which.min(fitness[sample(1:pop_size, 2, replace=FALSE)]), ]
+        # parents[i, ] <- pop[sample(1:pop_size, 2, replace=FALSE), which.min(fitness)]
+      }
+      
+      # crossover
+      children <- matrix(0, pop_size, n)
+      for (i in 1:pop_size) {
+        portion <- runif(1)
+        children[i, ] <- 0.5*parents[sample(1:pop_size, 1), ] + 0.5*parents[sample(1:pop_size, 1), ]
+        # half of the non-integers round up, the other half round down
+        is.fraction <- (children[i, ] - floor(children[i, ])) > 0
+        round_up <- sample(which(is.fraction), sum(is.fraction) %/% 2)
+        children[i, round_up] <- ceiling(children[i, round_up])
+        round_down <- setdiff(which(is.fraction), round_up)
+        children[i, round_down] <- floor(children[i, round_down])
+        
+        if (sum(children[i, ]) != m) {
+          print(children[i, ])
+          print(iter)
+          stop_flag <- TRUE
+          break
+        }
+        
+      }
+      if (stop_flag) {
+        break
+      }
+      # mutation
+      for (i in 1:pop_size) {
+        if (runif(1) < mutation_rate) {
+          mutate_index <- sample(1:n, 1)
+          children[i, mutate_index] <- children[i, mutate_index] + 1
+          mutate_index <- sample(which(children[i, ] > 0), 1)
+          children[i, mutate_index] <- children[i, mutate_index] - 1
+        }
+      }
+      
+      # select survivors
+      for (i in 1:pop_size) {
+        if (weight_J(children[i, ], lambda) < weight_J(pop[i, ], lambda)) {
+          pop[i, ] <- children[i, ]
+        }
+      }
+      
+    }
+  plot(record[1:max_iter], type="l")
+  return(pop[which.min(apply(pop, 1, weight_J, lambda)), ])
+}
+
+
+lambda <- 0.7
+lambda_a <- 2*(N-1)*(n+lambda*(1-n))/N
+lambda_b <- (1-lambda)*4*(N-1)/3/N
+lambda_star <- lambda_a / (lambda_a + lambda_b)
+
+start_time <- Sys.time()
+opt <- GA(K_function(design1, 1) * N * (N-1) / 2, choose(N, 2), lambda_star, max_iter = 12000)
+print(Sys.time() - start_time)
+table(opt)
+
+weight_J(delta[upper.tri(delta)], lambda_star)
+weight_J(opt, lambda_star)
+```
+
+Q: 如何確定 opt 能在 design 中出現?

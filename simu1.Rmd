@@ -1,0 +1,388 @@
+---
+title: "模仿 Shi, Tan (2018) 的模擬"
+author: "黃承平"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## $12\times 16$ design from different authors
+
+### Shi and Tang
+```{r, warning=FALSE}
+# regular 2^4 design
+FFD2 <- function(k) {
+  design <- matrix(0, 2^k, k)
+  for (i in 1:k) {
+    design[, i] <- rep(c(-1, 1), each = rep(2^(i-1), 2^(k-i)))
+  }
+  return(design)
+}
+design <- FFD2(4)
+design <- cbind(design, design[,3]*design[,4], design[,1]*design[,2])
+design_ShiTang <- rbind(t(design), -t(design))
+```
+
+### Lin
+```{r}
+# Hadamard matrix of order 24
+library(HadamardR)
+H24 <- t(Hadamard_matrix_method(24))
+hH24 <- H24[H24[,2]==1, ]
+hH24 <- hH24[, -c(1, 2)]
+
+ES2_func <- function(design){
+  return(sum(((t(design) %*% design)-nrow(design)*diag(1, ncol(design)))^2) / choose(ncol(design), 2) / 2)
+}
+
+Es2 <- numeric(ncol(hH24))
+lastEs2 <- 1000
+for (start in 1:ncol(hH24)){
+  candidates <- hH24[, -start]
+  design <- hH24[, start]
+  for (i in 1:15){
+    Alias <- numeric(ncol(candidates))
+    for (j in 1:ncol(candidates)){
+      Alias[j] <- sum((t(design) %*% candidates[, j])^2)
+    }
+    # print(Alias)
+    design <- cbind(design, candidates[, which(Alias==min(Alias))[1]]) # 有複數個最小值時，取第一個
+    candidates <- candidates[, -which(Alias==min(Alias))[1]]
+  }
+  Es2[start] <- ES2_func(design)
+  if (Es2[start] < lastEs2){
+    design_Lin <- design
+  }
+}
+Es2 # 從哪個 column 開始都差不多
+```
+
+### Wu
+```{r}
+library(daewr)
+design <- PBDes(12, 11)
+c1i <- apply(design[, 2:6], 2, function(x) x*design[, 1])
+design_Wu <- as.matrix(cbind(design, c1i))
+ES2_func(design_Wu)
+```
+
+### Tang and Wu
+```{r}
+design <- PBDes(12, 11)
+CompleteDesign <- cbind(design, design[c(1, 2, 3, 4, 10, 6, 
+                                         5, 7, 11, 8, 12, 9), ])
+Es2 <- numeric(ncol(CompleteDesign))
+lastEs2 <- 1000
+for (start in 1:ncol(CompleteDesign)){
+  candidates <- CompleteDesign[, -start]
+  design <- CompleteDesign[, start]
+  for (i in 1:15){
+    Alias <- numeric(ncol(candidates))
+    for (j in 1:ncol(candidates)){
+      Alias[j] <- sum((t(design) %*% candidates[, j])^2)
+    }
+    # print(Alias)
+    design <- cbind(design, candidates[, which(Alias==min(Alias))[1]]) # 有複數個最小值時，取第一個
+    candidates <- candidates[, -which(Alias==min(Alias))[1]]
+  }
+  Es2[start] <- ES2_func(design)
+  if (Es2[start] < lastEs2){
+    design_TangWu <- design
+  }
+}
+design_TangWu
+Es2 # 從哪個 column 開始都一樣
+```
+
+## 模擬沒有 2-FIs 時模型 identify rate
+
+
+### $m_1$=2
+
+```{r}
+Table <- data.frame(matrix(0, 9, 6))
+colnames(Table) <- c('T', 'm1', 'Lin', 'Wu', 'Tang-Wu', 'Shi-Tang')
+Table$T <- rep(1:3, each=3)
+Table$m1 <- rep(2:4, 3)
+```
+
+```{r}
+set.seed(1009)
+n <- 1000
+m1 <- 3
+sigma <- 0.3
+
+design <- design_Lin
+beta_place <- matrix(0, n, m1)
+true_identify <- c(0, 0, 0)
+names(true_identify) <- c('1', '2', '3')
+
+combination <- combn(ncol(design), m1)
+
+for (i in 1:n) {
+  # generate y
+  beta <- numeric(ncol(design))
+  place <- sample(1:ncol(design), m1)
+  beta_place[i, ] <- place
+  beta[place] <- rbinom(m1, 1, 0.5)*2-1
+  y <- design %*% beta + rnorm(nrow(design), 0, sigma)
+  # Use BIC to select factors
+  BIC_list <- numeric(choose(ncol(design), m1))
+  
+  for (j in 1:choose(ncol(design), m1)){
+    X <- cbind(1, design[, combination[, j]])
+    tryCatch({
+      SSres <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+    }, error = function(e) {
+      SSres <- sum((y-(X %*% Ginv(t(X) %*% X) %*% (t(X) %*% y)))^2)
+    })
+    # SSres <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+    BIC_list[j] <- nrow(design)*log(SSres/nrow(design)) + (m1+1)*log(nrow(design))
+  }
+  bestT <- order(BIC_list)[1:3] # 取前 T 個最低 BIC 對應 size 為 m1 的模型
+  for (k in 1:3){
+    if (any(apply(as.matrix(combination[, bestT[1:k]], m1), 
+                  2, function(x) all(sort(x) == sort(place))))) {
+      true_identify[k] <- true_identify[k] + 1
+    }
+  }
+  
+}
+# Table[Table$m1==m1 & Table$T==TT, 'Tang-Wu'] <- true_identify
+print(true_identify)
+
+```
+
+```{r}
+Table[Table['Shi-Tang']==0, 'Shi-Tang'] <- NA
+```
+
+```{r}
+# generate all 2-FI for a design
+design <- design_TangWu
+colnames(design) <- 1:ncol(design)
+FI2 <- matrix(0, nrow(design), choose(ncol(design), 2))
+count <- 0
+colnames(FI2) <- rep('0', ncol(FI2))
+for (i in 1:(ncol(design)-1)){
+  for (j in (i+1):ncol(design)){
+    count <- count + 1
+    FI2[, count] <- design[, i]*design[, j]
+    colnames(FI2)[count] <- paste(i, j, sep='*')
+  }
+}
+alias_id <- which(t(design) %*% FI2 == 12, arr.ind=TRUE)
+print(data.frame(alias_id[, 1], colnames(FI2)[alias_id[, 2]]))
+
+inf2 <- t(FI2) %*% FI2
+inf2[upper.tri(inf2, diag = T)] <- 0
+alias2fi_id <- which(abs(inf2) == 12, arr.ind=TRUE)
+print(data.frame(colnames(FI2)[alias2fi_id[, 1]], colnames(FI2)[alias2fi_id[, 2]]))
+
+merge(data.frame('x' = alias_id[, 1], 'y' = colnames(FI2)[alias_id[, 2]]), 
+      data.frame('y' = colnames(FI2)[alias2fi_id[, 1]], 'z' = colnames(FI2)[alias2fi_id[, 2]]))
+FI2 <- cbind(design, FI2)
+```
+
+把有 fully aliased 的拿掉
+```{r}
+Udesign <- matrix(FI2[, 1], ncol=1)
+for (i in 2:ncol(FI2)){
+  is.unique <- !any(apply(Udesign, 2, function(x) abs(sum(x*FI2[, i]))==nrow(FI2)))
+  if (is.unique){
+    Udesign <- cbind(Udesign, FI2[, i])
+  }
+}
+design_TangWu2 <- Udesign
+```
+
+
+
+```{r}
+which(abs(t(FI2[, 1:16]) %*% FI2[, 17:132]) == 12)
+InfFI2 <- t(FI2[, 17:132]) %*% FI2[, 17:132]
+InfFI2[upper.tri(InfFI2, diag = T)] <- 0
+which(abs(InfFI2) == 12)
+FI2[, 17]
+FI2[, 16+30]
+FI2[, 17+241%/%16]
+FI2[, 241%%16]
+
+Udesign <- t(unique(t(FI2)))
+which(abs((t(Udesign[, 17:ncol(Udesign)]) %*% Udesign[, 17:ncol(Udesign)])[lower.tri(matrix(0, 120, 120))])==12)
+```
+
+Lin 的 design resolution>3
+Tang-Wu 的 design I=123
+Wu 的 design (12)=12, (13)=13, (14)=14, (15)=15, (16)=16，共有 5*3 組 main effect aliased with 2-FI
+Shi-Tang 的 main effect 跟 2-FI 正交
+
+
+```{r, warning=FALSE}
+library(glmnet)
+set.seed(1009)
+n <- 1000
+m1 <- 3
+m2 <- 2
+sigma <- 0.7
+
+design <- design_ShiTang
+design2 <- design_ShiTang2
+true_identify <- numeric(n)
+nbeta_list <- numeric(n)
+
+for (i in 1:n) {
+  # generate y
+  beta <- numeric(ncol(design))
+  place <- sort(sample(1:ncol(design), m1))
+  FI_place <- sample(1:choose(m1, 2), m2)
+  beta[place] <- rbinom(m1, 1, 0.5)*2-1
+  y <- design %*% beta + rnorm(nrow(design), 0, sigma)
+  columns_true <- design[, place]
+  for  (j in FI_place){
+    y <- y + 0.5*sample(c(-1, 1), 1)*design[, combn(place, 2)[1, j]]*design[, combn(place, 2)[2, j]]
+    columns_true <- cbind(columns_true, design[, combn(place, 2)[1, j]]*design[, combn(place, 2)[2, j]])
+  }
+  # Use LASSO to select factors
+  # cv <- cv.glmnet(design2, y, alpha=1, lambda = exp(seq(-1, 1, l=100)), nfolds=ncol(design2))
+  
+  # choose lambda s.t. only m1+m2 non-zero beta
+  fit <- glmnet(design2, y, alpha = 1)
+  nnonzero <- apply(fit$beta != 0, 2, sum)
+  while (all(nnonzero != (m1+m2))) {
+    if (all(nnonzero < (m1+m2))) {
+      last_lambda <- fit[['lambda']][length(nnonzero)]
+      next_lambda <- max(fit[['lambda']][length(nnonzero)]-1, 0)
+    } else if (all(nnonzero > (m1+m2))) {
+      last_lambda <- fit[['lambda']][length(nnonzero)]+1
+      next_lambda <- fit[['lambda']][length(nnonzero)]
+    }
+    else {
+      last_lambda <- fit[['lambda']][which(nnonzero < (m1+m2))[length(which(nnonzero < (m1+m2)))]]
+      next_lambda <- fit[['lambda']][which(nnonzero > (m1+m2))[1]]
+    }
+    fit <- glmnet(design2, y, alpha = 1, 
+                  lambda=seq(last_lambda, next_lambda, l=100))
+    nnonzero <- apply(fit$beta != 0, 2, sum)
+  }
+  pred_id <- which(fit[['beta']][, which(nnonzero == (m1+m2))[1]] != 0)
+  columns_pred <- design2[, pred_id]
+  # beta_l <- glmnet(design2, y, alpha = 0.25, lambda=lambda_m1m2)$beta
+  # columns_pred <- design2[, which(beta_l != 0)]
+  
+  # if (all(columns_true == columns_pred)){
+  #   true_identify <- true_identify + 1
+  # }
+  for (j in 1:ncol(columns_pred)){
+    column_pred <- columns_pred[, j]
+    if(any(apply(columns_true, 2, function(x) sum(x * column_pred)==length(x)))) {
+      true_identify[i] <- true_identify[i] + 1
+    }
+  }
+  
+  # nbeta <- which(beta_l[1:16] != 0)
+  # nbeta_list[i] <- sum(nbeta)
+  # if (all(place %in% which(beta_l[1:16] != 0))) {
+  #   true_identify <- true_identify + 1
+  # }
+}
+# Table[Table$m1==m1 & Table$T==TT, 'Tang-Wu'] <- true_identify
+print(mean(true_identify))
+table(true_identify)
+# mean(nbeta_list)
+```
+
+```{r}
+set.seed(1009)
+n <- 1000
+m1 <- 3
+m2 <- 2
+sigma <- 0.7
+
+design <- design_ShiTang
+design2 <- design_ShiTang2
+true_identify <- numeric(n)
+nbeta_list <- numeric(n)
+
+for (i in 1:n) {
+  # generate y
+  beta <- numeric(ncol(design))
+  place <- sort(sample(1:ncol(design), m1))
+  FI_place <- sample(1:choose(16, 2), m2)
+  beta[place] <- rbinom(m1, 1, 0.5)*2-1
+  y <- design %*% beta + rnorm(nrow(design), 0, sigma)
+  columns_true <- design[, place]
+  for  (j in FI_place){
+    y <- y + 0.5*sample(c(-1, 1), 1)*design[, combn(1:16, 2)[1, j]]*design[, combn(1:16, 2)[2, j]]
+    columns_true <- cbind(columns_true, design[, combn(1:16, 2)[1, j]]*design[, combn(1:16, 2)[2, j]])
+  }
+  # Use LASSO to select factors
+  # choose lambda s.t. only m1+m2 non-zero beta
+  fit <- glmnet(design2, y, alpha = 1)
+  nnonzero <- apply(fit$beta != 0, 2, sum)
+  while (all(nnonzero != (m1+m2))) {
+    if (all(nnonzero < (m1+m2))) {
+      last_lambda <- fit[['lambda']][length(nnonzero)]
+      next_lambda <- max(fit[['lambda']][length(nnonzero)]-1, 0)
+    } else if (all(nnonzero > (m1+m2))) {
+      last_lambda <- fit[['lambda']][length(nnonzero)]+1
+      next_lambda <- fit[['lambda']][length(nnonzero)]
+    }
+    else {
+      last_lambda <- fit[['lambda']][which(nnonzero < (m1+m2))[length(which(nnonzero < (m1+m2)))]]
+      next_lambda <- fit[['lambda']][which(nnonzero > (m1+m2))[1]]
+    }
+    fit <- glmnet(design2, y, alpha = 1, 
+                  lambda=seq(last_lambda, next_lambda, l=100))
+    nnonzero <- apply(fit$beta != 0, 2, sum)
+  }
+  pred_id <- which(fit[['beta']][, which(nnonzero == (m1+m2))[1]] != 0)
+  columns_pred <- design2[, pred_id]
+  for (j in 1:ncol(columns_pred)){
+    column_pred <- columns_pred[, j]
+    if(any(apply(columns_true, 2, function(x) sum(x * column_pred)==length(x)))) {
+      true_identify[i] <- true_identify[i] + 1
+    }
+  }
+}
+print(mean(true_identify))
+table(true_identify)
+```
+
+```{r}
+design <- design_TangWu
+colnames(design) <- 1:ncol(design)
+FI2 <- matrix(0, nrow(design), choose(ncol(design), 2))
+count <- 0
+colnames(FI2) <- rep('0', ncol(FI2))
+for (i in 1:(ncol(design)-1)){
+  for (j in (i+1):ncol(design)){
+    count <- count + 1
+    FI2[, count] <- design[, i]*design[, j]
+    colnames(FI2)[count] <- paste(i, j, sep='*')
+  }
+}
+
+FI2 <- cbind(design, FI2)
+
+members <- 1
+Udesign <- matrix(FI2[, 1], ncol=1)
+for (i in 2:ncol(FI2)){
+  AliasToUdesign <- apply(Udesign, 2, function(x) abs(sum(x*FI2[, i]))==nrow(FI2))
+  is.unique <- !any(AliasToUdesign)
+  if (is.unique){
+    Udesign <- cbind(Udesign, FI2[, i])
+    members <- c(members, 1)
+  }
+  else {
+    members <- members + AliasToUdesign
+  }
+}
+sum(members)
+# design_TangWu2 <- Udesign
+
+```
+

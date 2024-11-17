@@ -1,0 +1,514 @@
+---
+title: "try1018"
+author: "112024507 黃承平"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+J_function <- function(design, t = 3) {
+  sum_products <- 0
+  m <- ncol(design)
+  comb <- combn(m, t)
+  for (i in 1:choose(m, t)) {
+    sum_products <- sum_products + sum(apply(design[, comb[, i]], 1, prod))^2
+  }
+  return(sum_products / choose(m, t))
+}
+
+J_function(design_Lin, 2)
+J_function(design_Wu, 3)
+J_function(design_TangWu, 3)
+J_function(design_ShiTang, 2)
+
+J_function(design_ShiTang, 2)
+```
+
+```{r}
+design <- FFD2(4)
+design <- cbind(design, design[, 3] * design[, 4], design[, 1] * design[, 2], 
+                design[, 2] * design[, 4], design[, 1] * design[, 4])
+design <- rbind(t(design), -t(design))
+design_a <- design[1:12, ]
+```
+
+```{r}
+J_function(design_a, 3)
+t(design_a) %*% design_a
+```
+
+# true model 有 2-fi
+
+```{r}
+library(matlib)
+set.seed(1009)
+n <- 1000
+m1 <- 2
+m2 <- 1
+sigma <- 0.3
+size_2fi <- 1
+
+design <- design_TangWu
+true_identify <- c(0, 0, 0)
+rank_list <- numeric(n)
+
+start_time <- Sys.time()
+for (i in 1:n) {
+  
+  # generate y
+  beta <- numeric(ncol(design))
+  place <- sample(16, m1)
+  FI_place <- sample(1:choose(m1, 2), m2)
+  beta[place] <- rbinom(m1, 1, 0.5)*2-1
+  y <- design %*% beta + rnorm(nrow(design), 0, sigma)
+  columns_true <- design[, place]
+  for  (j in FI_place){
+    y <- y + size_2fi*sample(c(-1, 1), 1)*design[, combn(place, 2)[1, j]]*design[, combn(place, 2)[2, j]]
+  }
+  
+  # Use BIC to select factors
+  n_candidte <- 0
+  for (m in 1:(m1+m2)){
+    n_candidte <- n_candidte + choose(16, m)
+  }
+  BIC_list <- numeric(n_candidte)
+  
+  count <- 1
+  lowest_BIC <- Inf
+  for (m in 1:(m1+m2)){
+    combination <- combn(16, m)
+    for (k in 1:choose(16, m)){
+      d <- design[, combination[, k]]
+      X <- cbind(1, d)
+      tryCatch({
+        SSres <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+      }, error = function(e) {
+        SSres <- sum((y-(X %*% Ginv(t(X) %*% X) %*% (t(X) %*% y)))^2)
+      })
+      BIC_value <- nrow(design)*log(SSres/nrow(design)) + (m+1)*log(nrow(design))
+      BIC_list[count] <- BIC_value
+      count <- count + 1
+      if (BIC_value < lowest_BIC) {
+        lowest_BIC <- BIC_value
+        columns_pred <- d
+      }
+      
+    }
+  }
+  X <- cbind(1, columns_true)
+  tryCatch({
+        SSres_true <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+      }, error = function(e) {
+        SSres_true <- sum((y-(X %*% Ginv(t(X) %*% X) %*% (t(X) %*% y)))^2)
+      })
+  BIC_true <- nrow(design)*log(SSres_true/nrow(design)) + (m1+1)*log(nrow(design))
+  # rank_list[i] <- which(abs(sort(BIC_list) - BIC_true) < 1e-7)
+  
+  true_identify[1] <- true_identify[1] + 1*(sort(BIC_list)[2] > BIC_true)
+  true_identify[2] <- true_identify[2] + 1*(sort(BIC_list)[3] > BIC_true)
+  true_identify[3] <- true_identify[3] + 1*(sort(BIC_list)[4] > BIC_true)
+  
+  # If all main effect is correct, then add 1 to true_identify
+  # right <- 0
+  # 
+  # if (ncol(columns_true) == ncol(columns_pred)){
+  #   for (k in 1:ncol(columns_true)){
+  #     column_true <- columns_true[, k]
+  #     if (any(apply(columns_pred, 2, function(x) sum(x * column_true)==length(x)))) {
+  #       right <- right + 1
+  #     }
+  #   }
+  # }
+  # 
+  # if (right == m1) {
+  #   true_identify <- true_identify + 1
+  # }
+  
+  
+  if (i %% 100 == 0) {
+    print(i)
+  }
+  
+}
+end_time <- Sys.time()
+print(end_time - start_time)
+print(true_identify)
+```
+
+
+
+```{r}
+set.seed(1009)
+n <- 1000
+m1 <- 4
+sigma <- 0.3
+
+design <- design_Lin
+beta_place <- matrix(0, n, m1)
+true_identify <- c(0, 0, 0)
+names(true_identify) <- c('1', '2', '3')
+
+combination <- combn(ncol(design), m1)
+
+for (i in 1:n) {
+  # generate y
+  beta <- numeric(ncol(design))
+  place <- sample(1:ncol(design), m1)
+  beta_place[i, ] <- place
+  beta[place] <- rbinom(m1, 1, 0.5)*2-1
+  y <- design %*% beta + rnorm(nrow(design), 0, sigma)
+  # Use BIC to select factors
+  BIC_list <- numeric(choose(ncol(design), m1))
+  
+  for (j in 1:choose(ncol(design), m1)){
+    X <- cbind(1, design[, combination[, j]])
+    tryCatch({
+      SSres <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+    }, error = function(e) {
+      SSres <- sum((y-(X %*% Ginv(t(X) %*% X) %*% (t(X) %*% y)))^2)
+    })
+    # SSres <- sum((y-(X %*% solve(t(X) %*% X, t(X) %*% y)))^2)
+    BIC_list[j] <- nrow(design)*log(SSres/nrow(design)) + (m1+1)*log(nrow(design))
+  }
+  bestT <- order(BIC_list)[1:3] # 取前 T 個最低 BIC 對應 size 為 m1 的模型
+  for (k in 1:3){
+    if (any(apply(as.matrix(combination[, bestT[1:k]], m1), 
+                  2, function(x) all(sort(x) == sort(place))))) {
+      true_identify[k] <- true_identify[k] + 1
+    }
+  }
+  
+}
+print(true_identify)
+
+```
+
+
+# column rank of a design
+
+```{r}
+# column rank of a matrix
+library(Matrix)
+rankMatrix(design_a)
+
+
+
+```
+
+```{r}
+generate_presence_matrix <- function(m) {
+  # Create a matrix with 2^m rows and m columns
+  n_rows <- 2^m
+  presence_matrix <- matrix(0, nrow = n_rows, ncol = m)
+  
+  # Generate all binary combinations for m columns
+  for (i in 1:n_rows) {
+    # Convert (i-1) to binary with m digits
+    binary_string <- intToBits(i - 1)[1:m]
+    # Convert to numeric and reverse for proper bit order
+    presence_matrix[i, ] <- rev(as.numeric(binary_string))
+  }
+  
+  return(presence_matrix)
+}
+
+
+```
+
+
+```{r}
+# find 12x16 SSD such that J2+J3 is minimized
+
+# first find a 10x16 foldover design
+design <- FFD2(4)
+design <- cbind(design, design[, 3] * design[, 4])
+first10 <- rbind(t(design), -t(design))
+
+# append a 2x16 balanced design
+
+
+best_score <- -Inf
+perms <- generate_presence_matrix(16)
+for (i in 1:nrow(perms)) {
+  last2 <- rbind(-2*perms[i, ]+1, 2*perms[i, ]-1)
+  design <- rbind(first10, last2)
+  J3 <- J_function(design, 3)
+  J2 <- J_function(design, 2)
+  score <- -(J2+J3)
+  if (score > best_score) {
+    best_score <- score
+    best_design <- design
+  }
+  if (i %% 1000 == 0) {
+    cat(paste('run ', i, ', beat score: ', best_score, '\n'))
+  }
+}
+
+```
+
+```{r}
+library(daewr)
+
+FULL <- expand.grid(a = c(-1, 1), b = c(-1, 1), c = c(-1, 1), d = c(-1, 1))
+candidate <- t(model.matrix(~ a*b*c*d, data = FULL))
+repeat_row <- apply(candidate %*% design, 1, function(x) any(x==ncol(candidate)))
+candidate <- candidate[!repeat_row, ]
+
+```
+
+```{r}
+n_last <- 3
+combinations <- combn(nrow(candidate), n_last)
+J2 <- J3 <- max_s <- num_max_s <- numeric(choose(nrow(candidate), n_last))
+
+
+for (i in 1:choose(nrow(candidate), n_last)){
+  design_stack <- rbind(first10, candidate[combinations[, i], ])
+  J2[i] <- J_function(design_stack, 2)
+  J3[i] <- J_function(design_stack, 3)
+  # maximum absolute inner product of columns
+  information <- t(design_stack) %*% design_stack
+  max_s[i] <- max(abs(information[upper.tri(information)]))
+  num_max_s[i] <- sum(abs(information[upper.tri(information)]) == max_s[i])
+}
+print(J2)
+print(J3)
+print(max_s)
+print(num_max_s)
+
+```
+
+```{r}
+design <- FFD2(4)
+FULL <- expand.grid(a = c(-1, 1), b = c(-1, 1), c = c(-1, 1), d = c(-1, 1))
+candidate <- t(model.matrix(~a*b*c*d, data = FULL))
+repeat_row <- apply(candidate %*% design, 1, function(x) any(x==ncol(candidate)))
+candidate <- candidate[!repeat_row, ]
+
+first8 <- rbind(t(design), -t(design))
+
+n_last <- 4
+combinations <- combn(nrow(candidate), n_last)
+J2 <- J3 <- max_s <- num_max_s <- numeric(choose(nrow(candidate), n_last))
+
+for (i in 1:choose(nrow(candidate), n_last)){
+  design_stack <- rbind(first8, candidate[combinations[, i], ])
+  J2[i] <- J_function(design_stack, 2)
+  J3[i] <- J_function(design_stack, 3)
+  # maximum absolute inner product of columns
+  information <- t(design_stack) %*% design_stack
+  max_s[i] <- max(abs(information[upper.tri(information)]))
+  num_max_s[i] <- sum(abs(information[upper.tri(information)]) == max_s[i])
+}
+print(J2)
+print(J3)
+print(max_s)
+print(num_max_s)
+
+```
+
+```{r}
+design <- FFD2(5)
+design <- cbind(design, design[, 4] * design[, 5])
+FULL <- expand.grid(a = c(-1, 1), b = c(-1, 1), c = c(-1, 1), d = c(-1, 1), e = c(-1, 1))
+candidate <- t(model.matrix(~a*b*c*d*e, data = FULL))
+repeat_row <- apply(candidate %*% design, 1, function(x) any(x==ncol(candidate)))
+candidate <- candidate[!repeat_row, ]
+
+first12 <- rbind(t(design), -t(design))
+
+n_last <- 4
+combinations <- combn(nrow(candidate), n_last)
+J2 <- J3 <- max_s <- num_max_s <- numeric(choose(nrow(candidate), n_last))
+
+for (i in 1:choose(nrow(candidate), n_last)){
+  design_stack <- rbind(first12, candidate[combinations[, i], ])
+  J2[i] <- J_function(design_stack, 2)
+  J3[i] <- J_function(design_stack, 3)
+  # maximum absolute inner product of columns
+  information <- t(design_stack) %*% design_stack
+  max_s[i] <- max(abs(information[upper.tri(information)]))
+  num_max_s[i] <- sum(abs(information[upper.tri(information)]) == max_s[i])
+  if (i %% 500 == 0) {
+    cat(paste('run ', i, '\n'))
+  }
+}
+print(J2)
+print(J3)
+print(max_s)
+print(num_max_s)
+J_function(first12, 2)
+```
+
+$E(J_3^2)=$ n_last ?
+
+```{r}
+set.seed(1009)
+
+N <- 100
+J_value <- numeric(N)
+
+for(i in 1:N) {
+  J_value[i] <- J_function(rbind(first12, 
+                                  2*rbinom(2^5, 1, 0.5)-1, 
+                                  2*rbinom(2^5, 1, 0.5)-1), 2) + 
+                J_function(rbind(first12, 
+                                  2*rbinom(2^5, 1, 0.5)-1, 
+                                  2*rbinom(2^5, 1, 0.5)-1), 3)
+}
+
+length(unique(J_value))
+barplot(table(J_value))
+min(J_value)
+```
+
+
+```{r}
+# design_stack + 2fi
+
+design <- design_stack
+colnames(design) <- 1:ncol(design)
+FI2 <- matrix(0, nrow(design), choose(ncol(design), 2))
+count <- 0
+colnames(FI2) <- rep('0', ncol(FI2))
+for (i in 1:(ncol(design)-1)){
+  for (j in (i+1):ncol(design)){
+    count <- count + 1
+    FI2[, count] <- design[, i]*design[, j]
+    colnames(FI2)[count] <- paste(i, j, sep='*')
+  }
+}
+
+M <- cbind(design, FI2)
+A2 <- (t(M) %*% M) %*% (t(M) %*% M)
+dim(A2)
+
+sum(diag(A2[1:32, 1:32])) - 32*13^2 - 32*31
+
+J_function(design_stack, 2) * choose(ncol(design_stack), 2) * 2 + 
+  J_function(design_stack, 3) * choose(ncol(design_stack), 3) * 3
+
+```
+
+```{r}
+design <- candidate[combinations[, i], ]
+m <- ncol(design)
+comb <- combn(m, 3)
+
+p3 <- c()
+for (i in 1:choose(m, 3)) {
+  p3 <- c(p3, sum(apply(design[, comb[, i]], 1, prod))^2)
+}
+table(p3)
+choose(m, 3)
+
+J_function(design, 3)
+```
+
+
+
+```{r}
+library(pracma)
+
+CreateSSD <- function(lambda = 0.5) {
+  design <- FFD2(4) # 16x4
+  FI2 <- matrix(0, nrow(design), choose(ncol(design), 2))
+  count <- 0
+  for (i in 1:(ncol(design)-1)){
+    for (j in (i+1):ncol(design)){
+      count <- count + 1
+      FI2[, count] <- design[, i]*design[, j]
+    }
+  }
+  
+  
+  lambda <- 0.7
+  J23 <- 0
+  for (column in 1:28) {
+    last_added <- Inf
+    for (i in 1:100) {
+      # randomly generate a balance length 16 vector
+      col_added <- rep(c(-1, 1), each=8)[randperm(16, 16)]
+      last_J23_plus <- lambda*sum((t(design) %*% col_added)^2) + 
+        (1-lambda) * sum((t(FI2) %*% col_added)^2)
+      while (T) {
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        
+        value_added <- matrix(0, 8, 8)
+        j <- 0
+        for (place1 in pos_place) {
+          j <- j + 1
+          k <- 0
+          for (place2 in neg_place) {
+            k <- k + 1
+            col_added_exchange <- col_added
+            col_added_exchange[c(place1, place2)] <- col_added_exchange[c(place2, place1)]
+            J2_plus <- sum((t(design) %*% col_added_exchange)^2)
+            J3_plus <- sum((t(FI2) %*% col_added_exchange)^2)
+            value_added[j, k] <- lambda*J2_plus + (1-lambda)*J3_plus
+          }
+        }
+        
+        # if no improvement, then break
+        if (min(value_added) >= last_J23_plus) {
+            min_exchange_places <- which(value_added == min(value_added), arr.ind=TRUE)[1, ]
+            col_added[c(pos_place[min_exchange_places[1]], neg_place[min_exchange_places[2]])] <-
+              col_added[c(neg_place[min_exchange_places[2]], pos_place[min_exchange_places[1]])]
+          break
+        }
+        last_J23_plus <- min(value_added)
+      }
+      if (last_J23_plus < last_added) {
+        last_added <- last_J23_plus
+        best_col_added <- col_added
+      }
+    }
+    
+    # append FI2
+    for (m in 1:ncol(design)) {
+      FI2 <- cbind(FI2, best_col_added * design[, m])
+    }
+    # append design matrix
+    design <- cbind(design, best_col_added)
+    J23 <- J23 + last_added
+  }
+  return(design)
+}
+
+
+
+dim(design)
+J_function(design, 2)
+J_function(design, 3)
+```
+
+
+
+```{r}
+design <- FFD2(5)
+design <- cbind(design, design[, 4] * design[, 5], design[, 1] * design[, 2] * design[, 3] * design[, 4], design[, 3] * design[, 5])
+design <- rbind(t(design), -t(design))
+dim(design)
+J_function(design, 2) * choose(ncol(design), 2)
+```
+
+```{r}
+M <- 100
+J2 <- J3 <- numeric(M)
+
+for (i in 1:M) {
+  design <- CreateSSD(lambda = 0.7)
+  J2[i] <- J_function(design, 2)
+  J3[i] <- J_function(design, 3)
+}
+hist(J2[1:M], xlab = 'J2', main = '')
+hist(J3[1:M], xlab = 'J3', main = '')
+hist(0.3*J3[1:M]+0.7*J2[1:M], xlab = '0.3 x J3 + 0.7 x J2', main = '')
+0.7*23.03226+0.3*3.76129
+```
+
