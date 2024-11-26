@@ -1,0 +1,294 @@
+---
+title: "11/26"
+output: html_notebook
+---
+
+```{r}
+library(pracma)
+library(extraDistr)
+
+```
+
+
+```{r}
+# Hadamard matrix of order 16
+
+library(HadamardR)
+regular <- FFD2(4)
+
+H1 <- cbind(regular[, 1], regular[, 2], regular[, 1]*regular[, 2], regular[, 3], 
+           regular[, 1]*regular[, 3], regular[, 2]*regular[, 3], regular[, 1]*regular[, 2]*regular[, 3], 
+           regular[, 4], regular[, 1]*regular[, 4], regular[, 2]*regular[, 4], regular[, 1]*regular[, 2]*regular[, 4], 
+           regular[, 3]*regular[, 4], regular[, 1]*regular[, 3]*regular[, 4], regular[, 2]*regular[, 3]*regular[, 4], 
+           regular[, 1]*regular[, 2]*regular[, 3]*regular[, 4])
+H2 <- H1[c(1, 2, 5, 8, 3, 9, 11, 4, 10, 7, 12, 6, 13, 14, 15, 16), ]
+Tang1630 <- cbind(H1, H2)
+dim(Tang1630)
+A_function(Tang1630, 2)
+A_function(Tang1630, 3)
+
+lambda*J_function(Tang1630, 2) + (1-lambda)*J_function(Tang1630, 3)
+
+K_function(Tang1630, 2)
+K_function(Tang1630, 3)
+```
+
+
+目標:
+找 $0.5E(s^2)+0.5E(J_3^2)=\frac{10}{11}A_2+\frac{1}{11}A_3)$ 最小的 $16\times 32$ balance SSD，$\lambda=\frac{10}{11}$。$\text{target}\propto\frac{2(N-1)}{N}[n+\lambda(1-n)]K_2+(1-\lambda)\frac{4(N-1)}{3N}K_3+c$。
+
+```{r}
+CreateSSD <- function(lambda = 0.5, N=12, n=16) {
+  design <- cbind(rep(c(-1, 1), each=N/2), rep(c(-1, 1, -1, 1), each=N/4))
+  # design <- FFD2(4)
+  for (column in 1:(n-2)) {
+    last_added <- Inf
+    for (try in 1:100) {
+      # randomly generate a balance length N vector
+      col_added <- rep(c(-1, 1), each=(N/2))[randperm(N, N)]
+      delta <- matrix(0, nrow(design), nrow(design))
+      for (i in 1:(nrow(design)-1)) {
+        for (j in (i+1):nrow(design)) {
+          delta[i, j] <- sum(cbind(design, col_added)[i, ] == cbind(design, col_added)[j, ])
+        }
+      }
+      
+      K2 <- sum(delta[upper.tri(delta)]^2)
+      K3 <- sum(delta[upper.tri(delta)]^3)
+      last_value <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+      
+      
+      
+      while (T) {
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        value_added <- matrix(0, N/2, N/2)
+        i <- 0
+        for (place1 in pos_place) {
+          i <- i + 1
+          j <- 0
+          for (place2 in neg_place) {
+            j <- j + 1
+            
+            delta_star <- delta
+            delta_star[place1, neg_place[-j]] <- delta_star[place1, neg_place[-j]] + 1
+            delta_star[place1, pos_place[-i]] <- delta_star[place1, pos_place[-i]] - 1
+            delta_star[place2, pos_place[-i]] <- delta_star[place2, pos_place[-i]] + 1
+            delta_star[place2, neg_place[-j]] <- delta_star[place2, neg_place[-j]] - 1
+            delta_star <- (delta_star[upper.tri(delta_star)]+t(delta_star)[upper.tri(delta_star)])
+            K2 <- sum(delta_star^2)
+            K3 <- sum(delta_star^3)
+            
+            value_added[i, j] <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+          }
+        }
+        
+        # if no improvement, then break
+        if (min(value_added) >= last_value) {
+          break
+        } else {
+          exchange_places <- which(value_added == min(value_added), arr.ind=TRUE)[1, ]
+          col_added[c(pos_place[exchange_places[1]], neg_place[exchange_places[2]])] <-
+            col_added[c(neg_place[exchange_places[2]], pos_place[exchange_places[1]])]
+        }
+        last_value <- min(value_added)
+      }
+      if (last_value < last_added) {
+        last_added <- last_value
+        best_col_added <- col_added
+      }
+    }
+    
+    # append design matrix
+    design <- cbind(design, best_col_added)
+  }
+  colnames(design) <- 1:ncol(design)
+  return(design)
+}
+
+lambda <- 10/11
+start_time <- Sys.time()
+design1 <- CreateSSD(lambda, 16, 32)
+Sys.time() - start_time
+
+dim(design1)
+A_function(design1, 2)
+A_function(design1, 3)
+
+lambda*J_function(design1, 2) + (1-lambda)*J_function(design1, 3)
+
+K_function(design1, 2)
+K_function(design1, 3)
+```
+
+找到的 design。
+
+```{r}
+print(design1)
+```
+
+
+```{r}
+N <- 16
+delta <- matrix(0, N, N)
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    delta[i, j] <- sum(design1[i, ] == design1[j, ])
+    delta[j, i] <- delta[i, j]
+  }
+}
+
+print(delta)
+apply(delta, 1, table)
+table(delta[upper.tri(delta)])
+```
+
+
+可以發現跟任意一列 (run) 距離 32-16 的列都有 3 個；距離 32-15 的列有 8 個；距離 32-14 的列有 4 個。
+  
+試著把一對 (14, 16) 變成 (15, 15) 降低 $\text{target}$。
+
+```{r}
+design1[1:3, ]
+```
+
+```{r}
+
+present <- lambda*J_function(design1, 2) + (1-lambda)*J_function(design1, 3)
+for (friend in 1:16) {
+  if ((sum(which(delta[friend, ]==16)) == 0) | (sum(which(delta[friend, ]==14)) == 0)){
+    next
+  } else {
+    print(friend)
+  }
+  for (row1 in which(delta[friend, ]==16)) {
+    for (row2 in which(delta[friend, ]==14)) {
+      for (col_index in which((design1[friend, ] == design1[row1, ]) & (design1[friend, ] != design1[row2, ]))) {
+        design1_try <- design1
+        temp <- design1_try[row1, col_index]
+        design1_try[row1, col_index] <- design1_try[row2, col_index]
+        design1_try[row2, col_index] <- temp
+        if (lambda*J_function(design1_try, 2) + (1-lambda)*J_function(design1_try, 3) < present) {
+          print(friend, row1, row2, col_index)
+          break
+        }
+      }
+    }
+  }
+}
+ 
+```
+
+換不出更好的。
+
+```{r}
+CreateSSD <- function(lambda = 0.5, N=12, n=16) {
+  design <- cbind(rep(c(-1, 1), each=N/2), rep(c(-1, 1, -1, 1), each=N/4))
+  # design <- FFD2(4)
+  for (column in 1:(n-2)) {
+    last_added <- Inf
+    for (try in 1:300) {
+      # randomly generate a balance length N vector
+      type <- sample(1:3, 1)
+      if (type == 1) {
+        col_added <- rep(c(-1, 1), times=c(N/2-1, N/2+1))[randperm(N, N)]
+      } else if (type == 2) {
+        col_added <- rep(c(-1, 1), times=c(N/2, N/2))[randperm(N, N)]
+      } else {
+        col_added <- rep(c(-1, 1), times=c(N/2+1, N/2-1))[randperm(N, N)]
+      }
+      delta <- matrix(0, nrow(design), nrow(design))
+      for (i in 1:(nrow(design)-1)) {
+        for (j in (i+1):nrow(design)) {
+          delta[i, j] <- sum(cbind(design, col_added)[i, ] == cbind(design, col_added)[j, ])
+        }
+      }
+      
+      K2 <- sum(delta[upper.tri(delta)]^2)
+      K3 <- sum(delta[upper.tri(delta)]^3)
+      last_value <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+      
+      while (T) {
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        if (type == 1) {
+          value_added <- matrix(0, N/2+1, N/2-1)
+        } else if (type == 2) {
+          value_added <- matrix(0, N/2, N/2)
+        } else {
+          value_added <- matrix(0, N/2-1, N/2+1)
+        }
+        # value_added <- matrix(0, N/2, N/2)
+        i <- 0
+        for (place1 in pos_place) {
+          i <- i + 1
+          j <- 0
+          for (place2 in neg_place) {
+            j <- j + 1
+            
+            delta_star <- delta
+            delta_star[place1, neg_place[-j]] <- delta_star[place1, neg_place[-j]] + 1
+            delta_star[place1, pos_place[-i]] <- delta_star[place1, pos_place[-i]] - 1
+            delta_star[place2, pos_place[-i]] <- delta_star[place2, pos_place[-i]] + 1
+            delta_star[place2, neg_place[-j]] <- delta_star[place2, neg_place[-j]] - 1
+            delta_star <- (delta_star[upper.tri(delta_star)]+t(delta_star)[upper.tri(delta_star)])
+            K2 <- sum(delta_star^2)
+            K3 <- sum(delta_star^3)
+            
+            value_added[i, j] <- (2*(N-1)*(n+lambda*(1-n))/N)*K2 + (1-lambda)*(4*(N-1)/3/N)*K3
+          }
+        }
+        
+        # if no improvement, then break
+        if (min(value_added) >= last_value) {
+          break
+        } else {
+          exchange_places <- which(value_added == min(value_added), arr.ind=TRUE)[1, ]
+          col_added[c(pos_place[exchange_places[1]], neg_place[exchange_places[2]])] <-
+            col_added[c(neg_place[exchange_places[2]], pos_place[exchange_places[1]])]
+        }
+        last_value <- min(value_added)
+      }
+      if (last_value < last_added) {
+        last_added <- last_value
+        best_col_added <- col_added
+      }
+    }
+    
+    # append design matrix
+    design <- cbind(design, best_col_added)
+  }
+  colnames(design) <- 1:ncol(design)
+  return(design)
+}
+
+lambda <- 10/11
+start_time <- Sys.time()
+design1 <- CreateSSD(lambda, 16, 32)
+Sys.time() - start_time
+
+dim(design1)
+A_function(design1, 2)
+A_function(design1, 3)
+
+lambda*J_function(design1, 2) + (1-lambda)*J_function(design1, 3)
+
+K_function(design1, 2)
+K_function(design1, 3)
+```
+
++7/-9 跟 +9/-7 的 factor 沒比較好(?)。
+
+```{r}
+N <- 16
+delta <- matrix(0, N, N)
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    delta[i, j] <- sum(design1[i, ] == design1[j, ])
+    delta[j, i] <- delta[i, j]
+  }
+}
+
+print(delta)
+table(delta[upper.tri(delta)])
+```
