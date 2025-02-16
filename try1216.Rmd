@@ -1,0 +1,198 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+col_exchange <- function(M, c1, c2) {
+  M_temp <- M
+  M_temp[, c1] <- M[, c2]
+  M_temp[, c2] <- M[, c1]
+  return(M_temp)
+}
+
+row_exchange <- function(M, r1, r2) {
+  M_temp <- M
+  M_temp[r1, ] <- M[r2, ]
+  M_temp[r2, ] <- M[r1, ]
+  return(M_temp)
+}
+
+start_time <- Sys.time()
+CreateSSD <- function(N, n_factor, lambda, balance = T, n_try = 100) {
+  # N <- 12
+  # n_factor <- 20
+  # lambda <- 0 # 0~1
+  
+  design <- cbind(rep(c(-1, 1), each=N/2), rep(c(-1, 1, 1, -1), each=N/4))
+  for (column in 1:(n_factor-2)) {
+  # for (column in 1:(n-2)) {
+    last_added <- Inf
+    for (try in 1:n_try) {
+      # randomly generate a balance length N vector
+      if (balance) {
+        col_added <- rep(c(-1, 1), each=(N/2))[randperm(N, N)]
+      } else {
+        col_added <- rbinom(N, 1, 0.5)*2-1
+        if (abs(sum(col_added)) == N)
+          col_added[1] <- -col_added[1]
+      }
+      delta <- Reduce("+", apply(design, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+      delta_added <- (col_added %*% t(col_added) + 1) / 2
+      n <- 2+column
+      
+      delta_new <- delta + delta_added
+      K1 <- sum(delta_new[upper.tri(delta_new)])
+      K2 <- sum(delta_new[upper.tri(delta_new)]^2)
+      K3 <- sum(delta_new[upper.tri(delta_new)]^3)
+      # lambda * E(s^2) + (1-lambda) * E(J_3^2)
+      target <- (1-lambda)*8/N/N/(N-2) * K3 + 
+        (4*(N-2)*lambda-12*n*(1-lambda))/N/N/(N-2) * K2 + 
+        ((6*n^2-6*n+4)*(1-lambda)-4*n*(N-2)*lambda)/N/N/(N-2) * K1
+      
+      while (T) {
+        
+        # exchange every pair of different-sign row in col_added
+        pos_place <- which(col_added==1)
+        neg_place <- which(col_added==-1)
+        target_exchage <- matrix(0, length(pos_place), length(neg_place))
+        for (i in 1:length(pos_place)) {
+          for (j in 1:length(neg_place)) {
+            delta_added_temp <- col_exchange(delta_added, pos_place[i], neg_place[j])
+            delta_added_temp <- row_exchange(delta_added_temp, neg_place[j], pos_place[i])
+            delta_new_temp <- delta + delta_added_temp
+            K1 <- sum(delta_new_temp[upper.tri(delta_new_temp)])
+            K2 <- sum(delta_new_temp[upper.tri(delta_new_temp)]^2)
+            K3 <- sum(delta_new_temp[upper.tri(delta_new_temp)]^3)
+            target_exchage[i, j] <- (1-lambda)*8/N/N/(N-2) * K3 + 
+              (4*(N-2)*lambda-12*n*(1-lambda))/N/N/(N-2) * K2 + 
+              ((6*n^2-6*n+4)*(1-lambda)-4*n*(N-2)*lambda)/N/N/(N-2) * K1
+          }
+        }
+        
+        # if no improvement, then break
+        last_value <- min(target_exchage)
+        if (min(target_exchage) >= target) {
+          break
+        } else {
+          # exchange the pair of rows that has the minimum target value
+          exchange_places <- which(target_exchage == min(target_exchage), arr.ind=TRUE)[1, ]
+          col_added[c(pos_place[exchange_places[1]], neg_place[exchange_places[2]])] <-
+            col_added[c(neg_place[exchange_places[2]], pos_place[exchange_places[1]])]
+          # update target value
+          delta_added <- col_exchange(delta_added, pos_place[exchange_places[1]], neg_place[exchange_places[2]])
+          delta_added <- row_exchange(delta_added, neg_place[exchange_places[2]], pos_place[exchange_places[1]])
+          delta_new <- delta + delta_added
+          K1 <- sum(delta_new[upper.tri(delta_new)])
+          K2 <- sum(delta_new[upper.tri(delta_new)]^2)
+          K3 <- sum(delta_new[upper.tri(delta_new)]^3)
+          # lambda * E(s^2) + (1-lambda) * E(J_3^2)
+          target <- (1-lambda)*8/N/N/(N-2) * K3 + 
+            (4*(N-2)*lambda-12*n*(1-lambda))/N/N/(N-2) * K2 + 
+            ((6*n^2-6*n+4)*(1-lambda)-4*n*(N-2)*lambda)/N/N/(N-2) * K1
+        }
+        last_value <- min(target_exchage)
+      }
+      if (last_value < last_added) {
+        last_added <- last_value
+        best_col_added <- col_added
+      }
+    }
+    
+    # append design matrix by column
+    design <- cbind(design, best_col_added)
+  }
+  colnames(design) <- 1:ncol(design)
+  return(design)
+}
+
+print(Sys.time() - start_time)
+colnames(design) <- 1:ncol(design)
+Reduce("+", apply(design, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+J_function(design, 3)
+J_function(design, 2)
+# delta_new <- Reduce("+", apply(cbind(design[, 1:2], c(-1, 1, -1, 1, -1, 1, 1, -1, 1, -1, 1, -1)), 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+# delta_new <- Reduce("+", apply(design[, 1:3], 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+# 
+# K1 <- sum(delta_new[upper.tri(delta_new)])
+# K2 <- sum(delta_new[upper.tri(delta_new)]^2)
+# K3 <- sum(delta_new[upper.tri(delta_new)]^3)
+# # lambda * E(s^2) + (1-lambda) * E(J_3^2)
+# n <- 3
+# target <- (1-lambda)*8/N/N/(N-2) * K3 + 
+#   (4*(N-2)*lambda-12*n*(1-lambda))/N/N/(N-2) * K2 + 
+#   ((6*n^2-6*n+4)*(1-lambda)-4*n*(N-2)*lambda)/N/N/(N-2) * K1
+```
+
+
+n 不變
+```{r}
+library(parallel)
+
+detectCores()
+cl <- makeCluster(5)
+clusterExport(cl, c("randperm", "col_exchange", "row_exchange", "CreateSSD", "J_function", "N", 'n', 'lambda'))
+
+# repeat 100 times CreateSSD and record J_2 and J_3
+
+N <- 12
+n <- 20
+lambda <- 0
+start_time <- Sys.time()
+
+result <- parLapply(cl, 1:100, function(x) {
+  design <- CreateSSD(N, n, lambda)
+  c(J_function(design, 2), J_function(design, 3))
+})
+stopCluster(cl)
+result1 <- Reduce(rbind, result)
+print(table(result1[, 1]))
+print(table(result1[, 2]))
+```
+
+n 變
+
+```{r}
+cl <- makeCluster(5)
+clusterExport(cl, c("randperm", "col_exchange", "row_exchange", "CreateSSD", "J_function"))
+result <- parLapply(cl, 1:100, function(x) {
+  design <- CreateSSD(N, n, lambda)
+  c(J_function(design, 2), J_function(design, 3))
+})
+result1 <- Reduce(rbind, result)
+hist(result1[, 1])
+table(result1[, 2])
+stopCluster(cl)
+```
+
+```{r}
+design <- CreateSSD(12, 20, 0)
+Reduce("+", apply(design, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+J_function(design, 2)
+J_function(design, 3)
+```
+
+```{r}
+design <- CreateSSD(12, 20, 1)
+Reduce("+", apply(design, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+J_function(design, 2)
+J_function(design, 3)
+```
+
+```{r}
+set.seed(1234)
+design_a <- CreateSSD(12, 16, 0.2, balance = F, n_try = 1000)
+Reduce("+", apply(design_a, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+J_function(design_a, 2)
+J_function(design_a, 3)
+# column rank of design_a
+qr(design_a)$rank
+```
+
+```{r}
+set.seed(1234)
+design_a <- CreateSSD(12, 16, 0.1, balance = T, n_try = 100)
+Reduce("+", apply(design_a, 2, function(x) (x %*% t(x)+1)/2, simplify = F))
+J_function(design_a, 2)
+J_function(design_a, 3)
+```
